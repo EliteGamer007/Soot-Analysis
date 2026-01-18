@@ -16,6 +16,7 @@ DAYS_OF_DATA = 30     # 1 Month duration
 START_DATE = datetime(2025, 12, 1, 0, 0, 0, tzinfo=timezone.utc)
 
 def clamp(value, lo, hi):
+    """Keeps values within bounds."""
     return max(lo, min(hi, value))
 
 def daily_cycle(hour):
@@ -111,7 +112,6 @@ def synthesize():
                             est_distance_km = random.randint(20, 120)
                             avg_speed_est = 25
                             drive_mins = (est_distance_km / avg_speed_est) * 60
-                            # City stops are frequent but random (traffic/delivery)
                             req_rest_mins = drive_mins * random.uniform(0.1, 0.3) 
 
                         else:
@@ -135,19 +135,12 @@ def synthesize():
                             drive_mins = (est_distance_km / avg_speed_est) * 60
                             
                             if est_distance_km < 100:
-                                # Short trips (<100km): Keep it low/random 
                                 req_rest_mins = random.uniform(0, 15) 
                             else:
-                                # Base: 20 mins minimum, plus scaling
                                 req_rest_mins = 20 + (drive_mins * 0.15) 
-
-                                # Tiered Add-ons for Realism
-                                if est_distance_km > 300:
-                                    req_rest_mins += random.randint(20, 45) # Coffee/Restroom
-                                if est_distance_km > 600:
-                                    req_rest_mins += random.randint(45, 70) # Lunch/Dinner break
-                                if est_distance_km > 1000:
-                                    req_rest_mins += random.randint(360, 540) # Mandatory Sleep (6-9 hours)
+                                if est_distance_km > 300: req_rest_mins += random.randint(20, 45)
+                                if est_distance_km > 600: req_rest_mins += random.randint(45, 70)
+                                if est_distance_km > 1000: req_rest_mins += random.randint(360, 540)
 
                         # Set Duration
                         total_duration = int(drive_mins + req_rest_mins)
@@ -181,85 +174,97 @@ def synthesize():
 
                 # --- 2. PHYSICS & DRIVING BEHAVIOR ---
                 target_speed = 0
+                is_engine_on = True
                 
                 if current_mode == 'PARKED':
-                    t += timedelta(minutes=SAMPLING_MINUTES)
-                    mode_duration_remaining -= SAMPLING_MINUTES
-                    continue 
-
-                # --- REST ENFORCEMENT LOGIC ---
-                rest_balance = trip_data["rest_needed_mins"] - trip_data["rest_taken_mins"]
-                trip_progress = 1.0 - (mode_duration_remaining / ((t - trip_data["start_time"]).total_seconds()/60 + mode_duration_remaining + 1))
-                
-                # Check if we should be sleeping (Forced Rest)
-                if trip_data["is_forcing_rest"]:
-                    # Continue sleeping until balance depleted or random wake up if nearly done
+                    is_engine_on = False
                     target_speed = 0
-                    if rest_balance <= 0:
-                        trip_data["is_forcing_rest"] = False
                 else:
-                    # Decide if we SHOULD start a rest block
-                    if rest_balance > 0:
-                        # If huge rest needed (>2 hours) and we are >45% through trip -> FORCE SLEEP
-                        if rest_balance > 120 and trip_progress > 0.45:
-                            trip_data["is_forcing_rest"] = True
-                            target_speed = 0
-                        # If moderate rest needed (>45 mins) and we are >30% through -> MEAL BREAK
-                        elif rest_balance > 45 and trip_progress > 0.3 and trip_progress < 0.7:
-                            if random.random() < 0.1: # 10% chance per tick to start the meal
+                    # --- REST ENFORCEMENT LOGIC ---
+                    rest_balance = trip_data["rest_needed_mins"] - trip_data["rest_taken_mins"]
+                    trip_progress = 1.0 - (mode_duration_remaining / ((t - trip_data["start_time"]).total_seconds()/60 + mode_duration_remaining + 1))
+                    
+                    if trip_data["is_forcing_rest"]:
+                        target_speed = 0
+                        # If resting for > 15 mins, turn engine OFF. Otherwise Idle.
+                        if rest_balance > 15:
+                            is_engine_on = False
+                        
+                        if rest_balance <= 0:
+                            trip_data["is_forcing_rest"] = False
+                    else:
+                        # Decide if we SHOULD start a rest block
+                        if rest_balance > 0:
+                            if rest_balance > 120 and trip_progress > 0.45:
                                 trip_data["is_forcing_rest"] = True
                                 target_speed = 0
-                        # Small random breaks for short stops
-                        elif random.random() < 0.02: 
-                            target_speed = 0
+                            elif rest_balance > 45 and trip_progress > 0.3 and trip_progress < 0.7:
+                                if random.random() < 0.1: 
+                                    trip_data["is_forcing_rest"] = True
+                                    target_speed = 0
+                            elif random.random() < 0.02: 
+                                target_speed = 0
+                            else:
+                                if current_mode == 'HIGHWAY': target_speed = random.uniform(75, 100)
+                                elif current_mode == 'CITY': target_speed = random.uniform(10, 45)
+                                elif current_mode == 'HEAVY_LOAD': target_speed = random.uniform(50, 75)
                         else:
-                            # Drive normally
                             if current_mode == 'HIGHWAY': target_speed = random.uniform(75, 100)
                             elif current_mode == 'CITY': target_speed = random.uniform(10, 45)
                             elif current_mode == 'HEAVY_LOAD': target_speed = random.uniform(50, 75)
-                    else:
-                        # No rest needed, drive
-                        if current_mode == 'HIGHWAY': target_speed = random.uniform(75, 100)
-                        elif current_mode == 'CITY': target_speed = random.uniform(10, 45)
-                        elif current_mode == 'HEAVY_LOAD': target_speed = random.uniform(50, 75)
 
-                # Apply Noise
-                if target_speed > 0:
-                    speed = clamp(target_speed + random.gauss(0, 4), 0, 110)
-                    if speed < 2: speed = 0
-                else:
-                    speed = 0
-
-                # --- 3. ENGINE PHYSICS ---
-                if speed == 0:
-                    rpm = 600 + random.uniform(-10, 10)
-                    load = 10 + random.uniform(0, 5) # Idle load
-                else:
-                    rpm = clamp(900 + speed * 14, 900, 2200)
-                    base_load = 50 if current_mode == 'HEAVY_LOAD' else 25
-                    load = clamp(base_load + 0.4 * speed + random.gauss(0, 5), 10, 100)
-
-                # Thermals
-                exhaust_flow = clamp((rpm * params["engine_disp"] * 0.035) * (0.5 + load/150), 50, 1800)
+                # --- 3. APPLY PHYSICS ---
                 ambient = 18 + 7 * daily_cycle(t.hour + t.minute/60)
-                
-                # Exhaust cools down during those long idle sleeps
-                base_temp = 160 + 3.2 * load + 0.04 * rpm
-                doc_inlet = clamp(base_temp + random.gauss(0, 10), 100, 700) 
+
+                if not is_engine_on:
+                    speed = 0
+                    rpm = 0
+                    load = 0
+                    fuel_rate = 0
+                    exhaust_flow = 0
+                    map_kpa = 100
+                    nox = 0
+                    dpf_dp = 0
+                    doc_inlet = ambient
+                    dpf_inlet = ambient
+                    dpf_outlet = ambient
+                else:
+                    if target_speed > 0:
+                        speed = clamp(target_speed + random.gauss(0, 4), 0, 110)
+                        if speed < 2: speed = 0
+                    else:
+                        speed = 0
+
+                    if speed == 0:
+                        rpm = 600 + random.uniform(-10, 10)
+                        load = 10 + random.uniform(0, 5) # Idle load
+                    else:
+                        rpm = clamp(900 + speed * 14, 900, 2200)
+                        base_load = 50 if current_mode == 'HEAVY_LOAD' else 25
+                        load = clamp(base_load + 0.4 * speed + random.gauss(0, 5), 10, 100)
+
+                    exhaust_flow = clamp((rpm * params["engine_disp"] * 0.035) * (0.5 + load/150), 50, 1800)
+                    fuel_rate = (load * params["engine_disp"] * 0.04) + 1.5
+                    map_kpa = 100 + load * 1.8
+                    nox = 50 + 5 * load + 0.1 * doc_inlet if 'doc_inlet' in locals() else 50
+                    
+                    base_temp = 160 + 3.2 * load + 0.04 * rpm
+                    doc_inlet = clamp(base_temp + random.gauss(0, 10), 100, 700) 
 
                 # --- 4. SOOT & MAINTENANCE ---
-                
-                # Accumulate
-                soot_rate = 0.005 * (load/100)
-                if current_mode == 'CITY': soot_rate *= 1.8 
-                
-                # Idle Clogging
-                if speed == 0 and doc_inlet < 200: soot_rate = 0.001 
+                if is_engine_on:
+                    # Accumulate
+                    soot_rate = 0.005 * (load/100)
+                    if current_mode == 'CITY': soot_rate *= 1.8 
+                    
+                    # Idle Clogging
+                    if speed == 0 and doc_inlet < 200: soot_rate = 0.001 
 
-                # Passive Regen
-                if doc_inlet > 420: soot_rate -= 0.003
+                    # Passive Regen
+                    if doc_inlet > 420: soot_rate -= 0.003
+                    
+                    soot += soot_rate
                 
-                soot += soot_rate
                 soot = clamp(soot, 0.5, 8.0) 
 
                 # Maintenance Events
@@ -267,13 +272,11 @@ def synthesize():
                 maint_reason = None
                 maint_note = ""
 
-                # Scheduled
                 if (t - last_scheduled_maint).days >= 7:
                     maint_type = "inspection"
                     maint_reason = "scheduled_interval"
                     maint_note = "Routine fleet maintenance check"
                     last_scheduled_maint = t
-                # Spot Check
                 elif random.random() < 0.0001: 
                     maint_type = "inspection"
                     maint_reason = "driver_report"
@@ -281,16 +284,17 @@ def synthesize():
 
                 # Active Regen
                 is_active_regen = False
-                if soot > 5.5: 
-                    is_active_regen = True
-                    maint_type = "active"
-                    maint_reason = "critical_soot_load"
-                    maint_note = "Forced regeneration (Critical)"
-                elif soot > 4.2 and (t - last_regen).days > 2 and speed > 60:
-                    is_active_regen = True
-                    maint_type = "active"
-                    maint_reason = "preventative_threshold"
-                    maint_note = "Standard active regeneration cycle"
+                if is_engine_on:
+                    if soot > 5.5: 
+                        is_active_regen = True
+                        maint_type = "active"
+                        maint_reason = "critical_soot_load"
+                        maint_note = "Forced regeneration (Critical)"
+                    elif soot > 4.2 and (t - last_regen).days > 2 and speed > 60:
+                        is_active_regen = True
+                        maint_type = "active"
+                        maint_reason = "preventative_threshold"
+                        maint_note = "Standard active regeneration cycle"
 
                 if is_active_regen:
                     dpf_inlet = doc_inlet + random.uniform(200, 300)
@@ -315,14 +319,13 @@ def synthesize():
                     ])
 
                 # --- 5. WRITE SENSORS ---
-                if not is_active_regen:
-                    dpf_inlet = doc_inlet - random.uniform(10, 30)
-                dpf_outlet = dpf_inlet - random.uniform(10, 50)
-                dpf_dp = clamp((0.005 + 0.002 * soot) * exhaust_flow, 0.2, 15.0) + random.gauss(0, 0.1)
-
-                fuel_rate = (load * params["engine_disp"] * 0.04) + 1.5
-                map_kpa = 100 + load * 1.8
-                nox = 50 + 5 * load + 0.1 * doc_inlet
+                if is_engine_on:
+                    if not is_active_regen:
+                        dpf_inlet = doc_inlet - random.uniform(10, 30)
+                    dpf_outlet = dpf_inlet - random.uniform(10, 50)
+                    dpf_dp = clamp((0.005 + 0.002 * soot) * exhaust_flow, 0.2, 15.0) + random.gauss(0, 0.1)
+                else:
+                    dpf_dp = 0
 
                 sensor_writer.writerow([
                     params["vehicle_id"], t.isoformat(),
@@ -335,18 +338,22 @@ def synthesize():
                 ])
 
                 # Update Trip Stats
-                trip_data["count"] += 1
-                trip_data["speed_sum"] += speed
-                trip_data["load_sum"] += load
-                trip_data["distance"] += speed * (SAMPLING_MINUTES / 60)
+                if is_engine_on:
+                    trip_data["count"] += 1
+                    trip_data["speed_sum"] += speed
+                    trip_data["load_sum"] += load
+                    trip_data["distance"] += speed * (SAMPLING_MINUTES / 60)
+                    
+                    if speed == 0:
+                        trip_data["idle_mins"] += SAMPLING_MINUTES
+                        if trip_data["last_speed"] > 5: trip_data["stops"] += 1
+                    
+                    trip_data["last_speed"] = speed
                 
-                if speed == 0:
-                    trip_data["idle_mins"] += SAMPLING_MINUTES
-                    trip_data["rest_taken_mins"] += SAMPLING_MINUTES
-                    if trip_data["last_speed"] > 5: trip_data["stops"] += 1
-                
-                trip_data["last_speed"] = speed
-                
+                # We track rest time regardless of engine state (Sleep vs Idle)
+                if trip_data["is_forcing_rest"] or (speed == 0 and is_engine_on):
+                     trip_data["rest_taken_mins"] += SAMPLING_MINUTES
+
                 # Advance Time
                 total_rows += 1
                 t += timedelta(minutes=SAMPLING_MINUTES)
