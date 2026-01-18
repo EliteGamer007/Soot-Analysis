@@ -212,12 +212,12 @@ curl http://localhost:8000/model/info
   "training_date": "2026-01-18",
   "model_type": "XGBoost",
   "num_features": 44,
-  "optimal_threshold": 0.509,
+  "optimal_threshold": 0.1652,
   "performance_metrics": {
-    "recall": 0.962,
-    "precision": 0.959,
-    "f1_score": 0.961,
-    "roc_auc": 0.9993
+    "recall": 0.265,
+    "precision": 0.164,
+    "f1_score": 0.202,
+    "roc_auc": 0.8253
   },
   "supported_features": ["Engine RPM", "Vehicle speed", ...]
 }

@@ -75,24 +75,6 @@ python test_integration.py
 
 ---
 
-## Key Insights from Tests
-
-### ✅ What Works
-1. **Feature engineering** - All 38+ features created correctly
-2. **Risk classification** - Threshold logic accurate across all ranges
-3. **Input validation** - Pydantic catches out-of-range values
-4. **Caching** - MD5 hashing produces consistent, unique keys
-5. **API endpoints** - All 8 endpoints respond correctly
-6. **Error handling** - Validation errors return 422 status
-
-### ⚠️ Notes
-- Feature count is 38 (not 44) in simplified real-time version
-  - Full training version has additional computed features
-  - This is expected and doesn't affect model accuracy
-- Integration tests skip if API not running
-- Cache performance test timing can be flaky due to network variance
-
----
 
 ## Coverage Summary
 

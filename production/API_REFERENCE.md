@@ -23,7 +23,7 @@ POST /predict/batch
 GET /model/info
 ```
 **Use:** Get model metadata  
-**Output:** Version, metrics (recall: 96.2%, precision: 95.9%), threshold
+**Output:** Version, metrics (recall: 26.5%, precision: 16.4%), threshold
 
 ### 4. Model Features
 ```http
